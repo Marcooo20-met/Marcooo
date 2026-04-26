@@ -66,7 +66,26 @@ DEBUG = True
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BMKG_API_URL = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
+BMKG_PORTAL_URL = "https://data.bmkg.go.id/prakiraan-cuaca/"
 MET_NO_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+DEFAULT_HTTP_HEADERS = {
+    "User-Agent": "weather-ensemble-dago/2.1 (+https://data.bmkg.go.id/prakiraan-cuaca/)",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+BMKG_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/135.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": BMKG_PORTAL_URL,
+    "Origin": "https://data.bmkg.go.id",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
 SOURCE_BASE_WEIGHTS = {
     "BMKG": 1.35,
     "ECMWF": 1.20,
@@ -130,6 +149,7 @@ ALL_SOURCE_CONFIGS = [
             "provider": item["provider"],
             "kind": "open_meteo",
             "endpoint": item["endpoint"],
+            "models": item.get("models"),
         }
         for item in OPEN_METEO_SOURCES
     ],
@@ -313,7 +333,10 @@ def build_ssl_context():
 
 
 def http_get_json(url, headers=None, timeout=HTTP_TIMEOUT_SECONDS):
-    request = urllib.request.Request(url, headers=headers or {})
+    effective_headers = dict(DEFAULT_HTTP_HEADERS)
+    if headers:
+        effective_headers.update(headers)
+    request = urllib.request.Request(url, headers=effective_headers)
     ssl_context = build_ssl_context() if url.lower().startswith("https://") else None
     with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
         charset = response.headers.get_content_charset() or "utf-8"
@@ -715,39 +738,7 @@ def category_from_metno_symbol(symbol_code, rain_mm, rh):
     return infer_kategori_non_hujan(None, rh)
 
 
-@dataclass
-class ForecastPoint:
-    source_id: str
-    provider: str
-    target_time: str
-    source_datetime: datetime
-    temp_c: Optional[float]
-    rh_pct: Optional[float]
-    rain_mm: Optional[float]
-    wind_kmh: Optional[float]
-    category: str
-    raw_condition: str
-    gap_minutes: Optional[float]
-
-
-@dataclass
-class SourceResult:
-    source_id: str
-    provider: str
-    success: bool
-    points: dict
-    error: str = ""
-    request_url: str = ""
-    raw_payload: Optional[Any] = None
-    payload_saved_path: str = ""
-    base_weight: float = 1.0
-
-
-def fetch_bmkg_forecast(target_date, config, args):
-    params = {"adm4": args.adm4}
-    url = build_url(BMKG_API_URL, params)
-    payload = fetch_json_with_retry(url, source_id=config["source_id"])
-
+def extract_bmkg_points(target_date, payload, args):
     data_items = payload.get("data") or []
     if not data_items:
         raise ValueError("BMKG response tidak memiliki data")
@@ -786,8 +777,8 @@ def fetch_bmkg_forecast(target_date, config, args):
             continue
         gap_minutes = round(abs((match["dt"] - target_dt).total_seconds()) / 60, 2)
         points[jam] = ForecastPoint(
-            source_id=config["source_id"],
-            provider=config["provider"],
+            source_id="BMKG",
+            provider="BMKG",
             target_time=jam,
             source_datetime=match["dt"],
             temp_c=match["temp_c"],
@@ -798,7 +789,112 @@ def fetch_bmkg_forecast(target_date, config, args):
             raw_condition=match["raw_condition"],
             gap_minutes=gap_minutes,
         )
-    return {"points": points, "raw_payload": payload, "request_url": url}
+    return points
+
+
+def load_cached_bmkg_payload(target_date, args):
+    raw_dir = path_output(RAW_PAYLOAD_DIRNAME)
+    if not os.path.isdir(raw_dir):
+        return None
+
+    file_stub = sanitize_filename("bmkg")
+    preferred_paths = [
+        os.path.join(raw_dir, f"{file_stub}_latest_success.json"),
+        os.path.join(raw_dir, f"{file_stub}_latest.json"),
+    ]
+    versioned_paths = []
+    ignored_names = {
+        f"{file_stub}_latest.json",
+        f"{file_stub}_latest_success.json",
+        f"{file_stub}_latest_failure.json",
+    }
+    for entry in os.scandir(raw_dir):
+        if not entry.is_file():
+            continue
+        lower_name = entry.name.lower()
+        if not lower_name.startswith(f"{file_stub}_") or not lower_name.endswith(".json"):
+            continue
+        if lower_name in ignored_names:
+            continue
+        versioned_paths.append(entry.path)
+
+    candidate_paths = []
+    for path in preferred_paths:
+        if os.path.exists(path):
+            candidate_paths.append(path)
+    versioned_paths.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    candidate_paths.extend(versioned_paths)
+
+    for path in candidate_paths:
+        document = read_json(path, default=None) or {}
+        payload = document.get("payload")
+        if not document.get("success") or not isinstance(payload, dict):
+            continue
+        try:
+            points = extract_bmkg_points(target_date, payload, args)
+        except ValueError:
+            continue
+        return {
+            "path": path,
+            "payload": payload,
+            "points": points,
+            "request_url": document.get("request_url") or "",
+        }
+    return None
+
+
+@dataclass
+class ForecastPoint:
+    source_id: str
+    provider: str
+    target_time: str
+    source_datetime: datetime
+    temp_c: Optional[float]
+    rh_pct: Optional[float]
+    rain_mm: Optional[float]
+    wind_kmh: Optional[float]
+    category: str
+    raw_condition: str
+    gap_minutes: Optional[float]
+
+
+@dataclass
+class SourceResult:
+    source_id: str
+    provider: str
+    success: bool
+    points: dict
+    error: str = ""
+    request_url: str = ""
+    raw_payload: Optional[Any] = None
+    payload_saved_path: str = ""
+    base_weight: float = 1.0
+
+
+def fetch_bmkg_forecast(target_date, config, args):
+    params = {"adm4": args.adm4}
+    url = build_url(BMKG_API_URL, params)
+    try:
+        payload = fetch_json_with_retry(
+            url,
+            headers=BMKG_HTTP_HEADERS,
+            source_id=config["source_id"],
+        )
+        points = extract_bmkg_points(target_date, payload, args)
+        return {"points": points, "raw_payload": payload, "request_url": url}
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        cached = load_cached_bmkg_payload(target_date, args)
+        if not cached:
+            raise exc
+        cache_name = os.path.basename(cached["path"])
+        note = f"Live BMKG gagal ({exc}); memakai cache {cache_name}"
+        log_warning(note)
+        return {
+            "points": cached["points"],
+            "raw_payload": cached["payload"],
+            "request_url": f"{url} [cached:{cache_name}]",
+            "note": note,
+        }
 
 
 def fetch_open_meteo_forecast(target_date, config, args):
@@ -1000,7 +1096,6 @@ def preview_request_url(config, args):
 
 
 def save_raw_payload_snapshot(target_date, result, tz_name):
-
     raw_dir = path_output(RAW_PAYLOAD_DIRNAME)
     ensure_directory(raw_dir)
     stamp = target_date.strftime("%Y%m%d")
@@ -1008,6 +1103,8 @@ def save_raw_payload_snapshot(target_date, result, tz_name):
     file_stub = sanitize_filename(result.source_id.lower())
     path_versioned = os.path.join(raw_dir, f"{file_stub}_{stamp}_{created_stamp}.json")
     path_latest = os.path.join(raw_dir, f"{file_stub}_latest.json")
+    path_latest_success = os.path.join(raw_dir, f"{file_stub}_latest_success.json")
+    path_latest_failure = os.path.join(raw_dir, f"{file_stub}_latest_failure.json")
     document = {
         "generated_at": now_local(tz_name).isoformat(),
         "target_date": target_date.isoformat(),
@@ -1022,6 +1119,10 @@ def save_raw_payload_snapshot(target_date, result, tz_name):
     }
     write_json(path_versioned, document)
     write_json(path_latest, document)
+    if result.success and result.raw_payload is not None:
+        write_json(path_latest_success, document)
+    else:
+        write_json(path_latest_failure, document)
     return path_versioned
 
 
@@ -1042,12 +1143,13 @@ def fetch_source(target_date, config, args):
 
         points = fetch_result["points"]
         success = len(points) > 0
+        note = fetch_result.get("note", "")
         result = SourceResult(
             source_id=source_id,
             provider=provider,
             success=success,
             points=points,
-            error="" if success else "source returned 0 points",
+            error=note if success else (note or "source returned 0 points"),
             request_url=fetch_result.get("request_url", request_url),
             raw_payload=fetch_result["raw_payload"],
             base_weight=source_active_weight(source_id),
@@ -2098,10 +2200,28 @@ def run_self_tests(args):
         raw_condition="Cerah Berawan",
         gap_minutes=0.0,
     )
+    sample_bmkg_payload = {
+        "data": [
+            {
+                "cuaca": [
+                    [
+                        {
+                            "local_datetime": "2026-04-27 10:00:00",
+                            "t": 28,
+                            "hu": 75,
+                            "weather_desc": "Cerah Berawan",
+                            "ws": 10,
+                        }
+                    ]
+                ]
+            }
+        ]
+    }
     assert bmkg_to_kategori("Hujan Ringan") == "Hujan Ringan"
     assert bmkg_rain_proxy_mm("Hujan Sedang") > 0
     assert category_from_wmo_code(0, 0, 50) == "Cerah"
     assert category_from_wmo_code(63, 4, 90) == "Hujan Sedang"
+    assert extract_bmkg_points(parse_iso_date("2026-04-27"), sample_bmkg_payload, args)["10:00"].category == "Cerah Berawan"
     assert point_weight(sample_point) > 0
     assert confidence_label(85) == "Tinggi"
     assert round(heat_index(32.0, 70.0), 2) >= 32.0
@@ -2110,6 +2230,8 @@ def run_self_tests(args):
     score, label = compute_confidence([sample_point] * 5, 5.0, 4.0, 1.0, 5.0, 0.5)
     assert score >= 0
     assert label in {"Tinggi", "Sedang", "Rendah"}
+    assert next(item for item in ALL_SOURCE_CONFIGS if item["source_id"] == "KMA")["models"] == "kma_seamless"
+    assert next(item for item in ALL_SOURCE_CONFIGS if item["source_id"] == "UKMO")["models"] == "ukmo_seamless"
     log_info("Self-test selesai. Semua assertion lulus.")
 
 
@@ -2189,5 +2311,7 @@ def main():
         raise ValueError(f"Mode tidak dikenali: {args.mode}")
 
 
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
