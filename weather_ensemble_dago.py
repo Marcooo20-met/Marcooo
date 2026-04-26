@@ -188,7 +188,9 @@ def log_warning(*args):
 
 
 def path_output(filename):
-    return os.path.join(BASE_DIR, filename)
+    public_dir = os.path.join(BASE_DIR, "public")
+    os.makedirs(public_dir, exist_ok=True)
+    return os.path.join(public_dir, filename)
 
 
 def write_csv(path, headers, rows):
