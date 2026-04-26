@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-04-26T16:40:09.356882+07:00",
+  "target_date": "2026-04-27",
+  "location_name": "Dago, Bandung",
+  "sources_total": 9,
+  "sources_success": 9,
+  "points_total": 45,
+  "weights_file": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-csv-import-json-import-math\\source_weights.json",
+  "health_file": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-csv-import-json-import-math\\source_health.json",
+  "retention_days": 30,
+  "low_coverage_slots": [],
+  "run_status": "ok"
+}

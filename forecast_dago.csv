@@ -1,0 +1,46 @@
+tanggal,source_id,provider,target_jam,source_datetime,suhu_C,RH_%,rain_mm,wind_kmh,gap_minutes,point_weight,kategori,raw_condition
+27-04-2026,BMKG,BMKG,10:00,2026-04-27 10:00:00,26.0,68.0,1.5,5.4,0.0,1.35,Hujan Ringan,Hujan Ringan
+27-04-2026,BMKG,BMKG,13:00,2026-04-27 13:00:00,24.0,77.0,0.0,8.5,0.0,1.35,Berawan,Berawan
+27-04-2026,BMKG,BMKG,16:00,2026-04-27 16:00:00,23.0,81.0,0.0,4.9,0.0,1.35,Berawan,Berawan
+27-04-2026,BMKG,BMKG,19:00,2026-04-27 19:00:00,22.0,86.0,0.0,2.5,0.0,1.35,Cerah Berawan,Cerah Berawan
+27-04-2026,BMKG,BMKG,22:00,2026-04-27 22:00:00,20.0,90.0,0.0,2.8,0.0,1.35,Cerah Berawan,Cerah Berawan
+27-04-2026,CMA,Open-Meteo / CMA GRAPES,10:00,2026-04-27 10:00:00,26.4,76.0,0.3,6.5,0.0,0.85,Hujan Ringan,wmo:51
+27-04-2026,CMA,Open-Meteo / CMA GRAPES,13:00,2026-04-27 13:00:00,25.8,78.0,1.9,6.9,0.0,0.85,Hujan Ringan,wmo:80
+27-04-2026,CMA,Open-Meteo / CMA GRAPES,16:00,2026-04-27 16:00:00,27.5,67.0,1.1,6.1,0.0,0.85,Hujan Ringan,wmo:55
+27-04-2026,CMA,Open-Meteo / CMA GRAPES,19:00,2026-04-27 19:00:00,24.7,87.0,1.4,6.4,0.0,0.85,Hujan Ringan,wmo:80
+27-04-2026,CMA,Open-Meteo / CMA GRAPES,22:00,2026-04-27 22:00:00,23.5,92.0,0.5,4.3,0.0,0.85,Hujan Ringan,wmo:53
+27-04-2026,ECMWF,Open-Meteo / ECMWF,10:00,2026-04-27 10:00:00,26.5,66.0,0.0,3.2,0.0,1.2,Cerah,wmo:0
+27-04-2026,ECMWF,Open-Meteo / ECMWF,13:00,2026-04-27 13:00:00,24.4,80.0,0.7,10.5,0.0,1.2,Hujan Ringan,wmo:53
+27-04-2026,ECMWF,Open-Meteo / ECMWF,16:00,2026-04-27 16:00:00,24.0,79.0,0.2,2.8,0.0,1.2,Hujan Ringan,wmo:51
+27-04-2026,ECMWF,Open-Meteo / ECMWF,19:00,2026-04-27 19:00:00,22.5,85.0,0.0,0.4,0.0,1.2,Berawan,wmo:3
+27-04-2026,ECMWF,Open-Meteo / ECMWF,22:00,2026-04-27 22:00:00,21.2,85.0,0.0,2.2,0.0,1.2,Berawan,wmo:3
+27-04-2026,GFS,Open-Meteo / NOAA GFS,10:00,2026-04-27 10:00:00,27.8,62.0,0.0,1.8,0.0,1.0,Berawan,wmo:3
+27-04-2026,GFS,Open-Meteo / NOAA GFS,13:00,2026-04-27 13:00:00,28.2,62.0,1.1,11.3,0.0,1.0,Hujan Ringan,wmo:55
+27-04-2026,GFS,Open-Meteo / NOAA GFS,16:00,2026-04-27 16:00:00,26.0,73.0,3.6,3.6,0.0,1.0,Hujan Sedang,wmo:81
+27-04-2026,GFS,Open-Meteo / NOAA GFS,19:00,2026-04-27 19:00:00,23.6,84.0,0.2,1.6,0.0,1.0,Hujan Ringan,wmo:51
+27-04-2026,GFS,Open-Meteo / NOAA GFS,22:00,2026-04-27 22:00:00,22.2,91.0,0.0,2.2,0.0,1.0,Berawan,wmo:3
+27-04-2026,ICON,Open-Meteo / DWD ICON,10:00,2026-04-27 10:00:00,26.9,77.0,0.0,2.2,0.0,1.05,Cerah Berawan,wmo:1
+27-04-2026,ICON,Open-Meteo / DWD ICON,13:00,2026-04-27 13:00:00,28.3,72.0,0.2,7.4,0.0,1.05,Berawan,wmo:3
+27-04-2026,ICON,Open-Meteo / DWD ICON,16:00,2026-04-27 16:00:00,26.3,79.0,2.6,5.7,0.0,1.05,Hujan Lebat,wmo:96
+27-04-2026,ICON,Open-Meteo / DWD ICON,19:00,2026-04-27 19:00:00,24.5,88.0,0.1,2.6,0.0,1.05,Berawan,wmo:3
+27-04-2026,ICON,Open-Meteo / DWD ICON,22:00,2026-04-27 22:00:00,23.8,92.0,0.0,2.5,0.0,1.05,Berawan,wmo:3
+27-04-2026,KMA,Open-Meteo / KMA,10:00,2026-04-27 10:00:00,26.6,70.0,0.0,5.3,0.0,0.9,Cerah,wmo:0
+27-04-2026,KMA,Open-Meteo / KMA,13:00,2026-04-27 13:00:00,27.8,61.0,0.0,9.4,0.0,0.9,Cerah Berawan,wmo:2
+27-04-2026,KMA,Open-Meteo / KMA,16:00,2026-04-27 16:00:00,25.1,77.0,0.0,5.0,0.0,0.9,Berawan,wmo:3
+27-04-2026,KMA,Open-Meteo / KMA,19:00,2026-04-27 19:00:00,24.0,80.0,0.0,3.7,0.0,0.9,Berawan,wmo:3
+27-04-2026,KMA,Open-Meteo / KMA,22:00,2026-04-27 22:00:00,22.8,84.0,0.0,5.0,0.0,0.9,Berawan,wmo:3
+27-04-2026,METEOFRANCE,Open-Meteo / Meteo-France,10:00,2026-04-27 10:00:00,30.3,76.0,0.0,4.5,0.0,1.1,Cerah Berawan,wmo:2
+27-04-2026,METEOFRANCE,Open-Meteo / Meteo-France,13:00,2026-04-27 13:00:00,31.0,80.0,0.5,8.4,0.0,1.1,Hujan Lebat,wmo:95
+27-04-2026,METEOFRANCE,Open-Meteo / Meteo-France,16:00,2026-04-27 16:00:00,27.1,99.0,10.7,1.8,0.0,1.1,Hujan Lebat,wmo:95
+27-04-2026,METEOFRANCE,Open-Meteo / Meteo-France,19:00,2026-04-27 19:00:00,27.2,94.0,3.7,2.8,0.0,1.1,Hujan Sedang,wmo:81
+27-04-2026,METEOFRANCE,Open-Meteo / Meteo-France,22:00,2026-04-27 22:00:00,26.2,99.0,0.0,1.4,0.0,1.1,Berawan,wmo:3
+27-04-2026,METNO,MET Norway,10:00,2026-04-27 10:00:00,26.2,68.7,0.3,5.4,0.0,1.0,Hujan Ringan,rainshowers_day
+27-04-2026,METNO,MET Norway,13:00,2026-04-27 13:00:00,27.0,61.6,0.7,11.52,0.0,1.0,Hujan Ringan,rainshowers_day
+27-04-2026,METNO,MET Norway,16:00,2026-04-27 16:00:00,24.3,77.6,0.0,4.68,0.0,1.0,Cerah Berawan,partlycloudy_day
+27-04-2026,METNO,MET Norway,19:00,2026-04-27 19:00:00,22.8,83.6,0.0,5.04,0.0,1.0,Cerah Berawan,partlycloudy_night
+27-04-2026,METNO,MET Norway,22:00,2026-04-27 22:00:00,21.8,85.3,0.0,4.32,0.0,1.0,Berawan,cloudy
+27-04-2026,UKMO,Open-Meteo / UK Met Office,10:00,2026-04-27 10:00:00,26.6,70.0,0.0,5.3,0.0,0.95,Cerah,wmo:0
+27-04-2026,UKMO,Open-Meteo / UK Met Office,13:00,2026-04-27 13:00:00,27.8,61.0,0.0,9.4,0.0,0.95,Cerah Berawan,wmo:2
+27-04-2026,UKMO,Open-Meteo / UK Met Office,16:00,2026-04-27 16:00:00,25.1,77.0,0.0,5.0,0.0,0.95,Berawan,wmo:3
+27-04-2026,UKMO,Open-Meteo / UK Met Office,19:00,2026-04-27 19:00:00,24.0,80.0,0.0,3.7,0.0,0.95,Berawan,wmo:3
+27-04-2026,UKMO,Open-Meteo / UK Met Office,22:00,2026-04-27 22:00:00,22.8,84.0,0.0,5.0,0.0,0.95,Berawan,wmo:3
