@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import ssl
+import tempfile
 import time
 import traceback
 import urllib.error
@@ -58,18 +59,20 @@ DEFAULT_RETENTION_DAYS = 30
 MAX_CONSECUTIVE_FAILURE_PENALTY = 5
 
 RUN_DAILY = False
-RUN_TIME = "23:15"
+RUN_TIME = "19:00"
 RUN_IMMEDIATELY_ON_START = True
 SLEEP_INTERVAL_SECONDS = 30
 
 DEBUG = True
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_ROOT_DIRNAME = "outputs"
+LOCATIONS_FILENAME = "locations.json"
 BMKG_API_URL = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
 BMKG_PORTAL_URL = "https://data.bmkg.go.id/prakiraan-cuaca/"
 MET_NO_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
 DEFAULT_HTTP_HEADERS = {
-    "User-Agent": "weather-ensemble-dago/2.1 (+https://data.bmkg.go.id/prakiraan-cuaca/)",
+    "User-Agent": "weather-ensemble-multi-location/3.0 (+https://data.bmkg.go.id/prakiraan-cuaca/)",
     "Accept": "application/json,text/plain,*/*",
     "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
 }
@@ -136,7 +139,6 @@ OPEN_METEO_SOURCES = [
         "models": "ukmo_seamless",
     },
 ]
-
 ALL_SOURCE_CONFIGS = [
     {
         "source_id": "BMKG",
@@ -160,9 +162,63 @@ ALL_SOURCE_CONFIGS = [
     },
 ]
 
-LOGGER = logging.getLogger("weather_ensemble_dago")
+
+@dataclass(frozen=True)
+class LocationConfig:
+    slug: str
+    location_name: str
+    adm4: str
+    latitude: float
+    longitude: float
+    timezone: str = DEFAULT_TIMEZONE
+    bmkg_point_name: str = ""
+    area_level: str = "adm4"
+    is_proxy_bmkg: bool = False
+    note: str = ""
+
+
+DEFAULT_LOCATION_PRESET_DATA = {
+    "dago": {
+        "location_name": "Dago, Bandung",
+        "adm4": "32.73.02.1004",
+        "latitude": -6.8890,
+        "longitude": 107.6100,
+        "bmkg_point_name": "Dago",
+        "area_level": "kelurahan",
+        "is_proxy_bmkg": False,
+        "note": "BMKG point: Dago, Coblong, Kota Bandung",
+    },
+    # Jatinangor does not have a single village named "Jatinangor" in BMKG adm4 format,
+    # so the preset uses Hegarmanah as a representative BMKG point for the district area.
+    "jatinangor": {
+        "location_name": "Jatinangor, Sumedang",
+        "adm4": "32.11.15.2002",
+        "latitude": -6.9380,
+        "longitude": 107.7556,
+        "bmkg_point_name": "Hegarmanah",
+        "area_level": "kecamatan",
+        "is_proxy_bmkg": True,
+        "note": "BMKG representative point: Hegarmanah, Kecamatan Jatinangor",
+    },
+    "arjawinangun": {
+        "location_name": "Arjawinangun, Cirebon",
+        "adm4": "32.09.24.2004",
+        "latitude": -6.6453,
+        "longitude": 108.4103,
+        "bmkg_point_name": "Arjawinangun",
+        "area_level": "kecamatan",
+        "is_proxy_bmkg": False,
+        "note": "BMKG point: Arjawinangun, Kecamatan Arjawinangun",
+    },
+}
+DEFAULT_MULTI_LOCATION_SLUGS = ["dago", "jatinangor", "arjawinangun"]
+ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS = list(DEFAULT_MULTI_LOCATION_SLUGS)
+
+LOGGER = logging.getLogger("weather_ensemble_multi_location")
 ACTIVE_SOURCE_WEIGHTS = dict(SOURCE_BASE_WEIGHTS)
 SOURCE_HEALTH = {}
+ACTIVE_OUTPUT_DIR = BASE_DIR
+ACTIVE_LOCATIONS_FILE = ""
 
 
 def log_info(*args):
@@ -187,33 +243,94 @@ def log_warning(*args):
         LOGGER.warning(message)
 
 
-def path_output(filename):
-    public_dir = os.path.join(BASE_DIR, "public")
-    os.makedirs(public_dir, exist_ok=True)
-    return os.path.join(public_dir, filename)
+def batch_info(*args):
+    print("[INFO]", " ".join(str(arg) for arg in args))
 
 
-def write_csv(path, headers, rows):
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(headers)
-        writer.writerows(rows)
-
-
-def write_dict_csv(path, fieldnames, rows):
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def write_json(path, payload):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+def batch_warning(*args):
+    print("[WARN]", " ".join(str(arg) for arg in args))
 
 
 def ensure_directory(path):
     os.makedirs(path, exist_ok=True)
+
+
+def sanitize_filename(text):
+    cleaned = []
+    for char in text:
+        cleaned.append(char if char.isalnum() or char in ("-", "_") else "_")
+    return "".join(cleaned).strip("_") or "unknown"
+
+
+def root_output_dir():
+    path = os.path.join(BASE_DIR, OUTPUT_ROOT_DIRNAME)
+    ensure_directory(path)
+    return path
+
+
+def root_output_path(filename):
+    return os.path.join(root_output_dir(), filename)
+
+
+def path_config(filename):
+    return os.path.join(BASE_DIR, filename)
+
+
+def set_active_output_dir(location_slug):
+    global ACTIVE_OUTPUT_DIR
+    ACTIVE_OUTPUT_DIR = os.path.join(root_output_dir(), sanitize_filename(location_slug))
+    ensure_directory(ACTIVE_OUTPUT_DIR)
+
+
+def path_output(filename):
+    ensure_directory(ACTIVE_OUTPUT_DIR)
+    return os.path.join(ACTIVE_OUTPUT_DIR, filename)
+
+
+def atomic_write_text(path, writer_fn, newline=None):
+    directory = os.path.dirname(path) or "."
+    ensure_directory(directory)
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=directory,
+        prefix=f".{sanitize_filename(os.path.basename(path))}_",
+        suffix=".tmp",
+        text=True,
+    )
+    try:
+        with os.fdopen(temp_fd, "w", newline=newline, encoding="utf-8") as f:
+            writer_fn(f)
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+def write_csv(path, headers, rows):
+    def writer_fn(f):
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        writer.writerows(rows)
+
+    atomic_write_text(path, writer_fn, newline="")
+
+
+def write_dict_csv(path, fieldnames, rows):
+    def writer_fn(f):
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    atomic_write_text(path, writer_fn, newline="")
+
+
+def write_json(path, payload):
+    def writer_fn(f):
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    atomic_write_text(path, writer_fn)
 
 
 def read_json(path, default=None):
@@ -230,15 +347,78 @@ def read_dict_csv(path):
         return list(csv.DictReader(f))
 
 
-def append_dict_csv(path, fieldnames, rows):
-    if not rows:
-        return
-    file_exists = os.path.exists(path)
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(rows)
+def build_location_config(slug, payload):
+    return LocationConfig(
+        slug=sanitize_filename(slug.lower()),
+        location_name=payload["location_name"],
+        adm4=payload["adm4"],
+        latitude=float(payload["latitude"]),
+        longitude=float(payload["longitude"]),
+        timezone=payload.get("timezone", DEFAULT_TIMEZONE),
+        bmkg_point_name=payload.get("bmkg_point_name", payload["location_name"]),
+        area_level=payload.get("area_level", "adm4"),
+        is_proxy_bmkg=bool(payload.get("is_proxy_bmkg", False)),
+        note=payload.get("note", ""),
+    )
+
+
+def embedded_location_presets():
+    return {
+        slug: build_location_config(slug, payload)
+        for slug, payload in DEFAULT_LOCATION_PRESET_DATA.items()
+    }
+
+
+LOCATION_PRESETS = embedded_location_presets()
+
+
+def resolve_locations_file_path(locations_file=None):
+    if not locations_file:
+        return path_config(LOCATIONS_FILENAME)
+    if os.path.isabs(locations_file):
+        return locations_file
+    return os.path.join(BASE_DIR, locations_file)
+
+
+def load_location_presets(locations_file=None):
+    locations_path = resolve_locations_file_path(locations_file)
+    if not os.path.exists(locations_path):
+        if locations_file:
+            raise ValueError(f"locations file tidak ditemukan: {locations_path}")
+        return embedded_location_presets(), list(DEFAULT_MULTI_LOCATION_SLUGS), ""
+
+    payload = read_json(locations_path, default=None)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Isi locations file tidak valid: {locations_path}")
+
+    raw_locations = payload.get("locations")
+    if not isinstance(raw_locations, dict) or not raw_locations:
+        raise ValueError(f"Field 'locations' wajib ada dan tidak boleh kosong: {locations_path}")
+
+    presets = {
+        sanitize_filename(slug.lower()): build_location_config(slug, item)
+        for slug, item in raw_locations.items()
+    }
+
+    configured_defaults = payload.get("default_multi_locations") or DEFAULT_MULTI_LOCATION_SLUGS
+    active_defaults = []
+    for slug in configured_defaults:
+        clean_slug = sanitize_filename(str(slug).lower())
+        if clean_slug not in presets:
+            raise ValueError(
+                f"default_multi_locations memuat slug yang tidak ada di locations file: {clean_slug}"
+            )
+        if clean_slug not in active_defaults:
+            active_defaults.append(clean_slug)
+
+    return presets, active_defaults, locations_path
+
+
+def refresh_location_presets(locations_file=None):
+    global LOCATION_PRESETS, ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS, ACTIVE_LOCATIONS_FILE
+    LOCATION_PRESETS, ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS, ACTIVE_LOCATIONS_FILE = load_location_presets(
+        locations_file
+    )
 
 
 def safe_float(value):
@@ -254,13 +434,6 @@ def round_or_blank(value, digits=2):
     if value is None:
         return ""
     return round(value, digits)
-
-
-def sanitize_filename(text):
-    cleaned = []
-    for char in text:
-        cleaned.append(char if char.isalnum() or char in ("-", "_") else "_")
-    return "".join(cleaned).strip("_") or "unknown"
 
 
 def setup_logging(args):
@@ -279,7 +452,6 @@ def setup_logging(args):
     handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     handler.setFormatter(formatter)
     LOGGER.addHandler(handler)
-
     return log_path
 
 
@@ -359,7 +531,7 @@ def fetch_json_with_retry(url, headers=None, source_id="UNKNOWN"):
                 raise
             if attempt < MAX_RETRY_HTTP:
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
             log_debug(source_id, "attempt gagal:", exc)
             if attempt < MAX_RETRY_HTTP:
@@ -372,24 +544,12 @@ def nearest_candidate(candidates, target_dt, max_gap_hours=4):
     for item in candidates:
         delta_seconds = abs((item["dt"] - target_dt).total_seconds())
         if best is None or delta_seconds < best["delta_seconds"]:
-            best = {
-                "delta_seconds": delta_seconds,
-                "item": item,
-            }
+            best = {"delta_seconds": delta_seconds, "item": item}
     if best is None:
         return None
     if best["delta_seconds"] > max_gap_hours * 3600:
         return None
     return best["item"]
-
-
-def mean_std(values):
-    cleaned = [value for value in values if value is not None]
-    if not cleaned:
-        return None, None
-    mean = sum(cleaned) / len(cleaned)
-    std = math.sqrt(sum((x - mean) ** 2 for x in cleaned) / len(cleaned))
-    return round(mean, 2), round(std, 2)
 
 
 def weighted_mean_std(weighted_pairs):
@@ -665,7 +825,7 @@ def bmkg_to_kategori(cuaca):
         return "Cerah Berawan"
     if "cerah" in text:
         return "Cerah"
-    if "lebat" in text or "badai" in text:
+    if "lebat" in text or "badai" in text or "petir" in text:
         return "Hujan Lebat"
     if "sedang" in text:
         return "Hujan Sedang"
@@ -1001,12 +1161,9 @@ def metno_symbol_code(data):
 
 
 def fetch_met_no_forecast(target_date, config, args):
-    params = {
-        "lat": args.latitude,
-        "lon": args.longitude,
-    }
+    params = {"lat": args.latitude, "lon": args.longitude}
     headers = {
-        "User-Agent": "weather-ensemble-dago/2.0 (contact: local-script)",
+        "User-Agent": "weather-ensemble-multi-location/3.0 (contact: local-script)",
         "Accept": "application/json",
     }
     url = build_url(MET_NO_URL, params)
@@ -1194,11 +1351,11 @@ def report_dir():
 
 
 def observation_file_for_date(target_date):
-    return os.path.join(observation_dir(), f"observations_dago_{target_date.strftime('%Y%m%d')}.csv")
+    return os.path.join(observation_dir(), f"observations_{target_date.strftime('%Y%m%d')}.csv")
 
 
 def observation_master_file():
-    return path_output("observations_dago.csv")
+    return path_output("observations.csv")
 
 
 def normalize_observation_row(row):
@@ -1336,10 +1493,7 @@ def write_observation_rows(target_date, rows):
         existing[(row.get("tanggal"), row.get("jam"))] = row
     merged = sorted(
         existing.values(),
-        key=lambda item: (
-            parse_display_date(item["tanggal"]),
-            item["jam"],
-        ),
+        key=lambda item: (parse_display_date(item["tanggal"]), item["jam"]),
     )
     write_dict_csv(master_path, fieldnames, merged)
 
@@ -1384,6 +1538,8 @@ def import_external_observations(args):
             "source_file": args.observations_csv,
             "rows_imported": len(rows),
             "master_file": master_path,
+            "location_slug": args.location_slug,
+            "location_name": args.location_name,
         },
     )
     return rows
@@ -1412,21 +1568,24 @@ def sync_observations(args):
                     "payload": payload,
                 },
             )
-        summary_rows.append(
-            {
-                "target_date": target_date.isoformat(),
-                "rows_saved": len(rows),
-            }
-        )
+        summary_rows.append({"target_date": target_date.isoformat(), "rows_saved": len(rows)})
         log_info("Observasi tersimpan untuk", target_date.isoformat(), f"({len(rows)} rows)")
 
     summary_path = os.path.join(report_dir(), "observation_sync_summary.json")
-    write_json(summary_path, {"generated_at": now_local(args.timezone).isoformat(), "rows": summary_rows})
+    write_json(
+        summary_path,
+        {
+            "generated_at": now_local(args.timezone).isoformat(),
+            "location_slug": args.location_slug,
+            "location_name": args.location_name,
+            "rows": summary_rows,
+        },
+    )
     return summary_rows
 
 
 def forecast_file_for_date(target_date):
-    return path_output(f"forecast_dago_{target_date.strftime('%Y%m%d')}.csv")
+    return path_output(f"forecast_{target_date.strftime('%Y%m%d')}.csv")
 
 
 def load_observation_index():
@@ -1499,7 +1658,7 @@ def absolute_error(left, right):
 def evaluate_historical_performance(args):
     observation_index = load_observation_index()
     if not observation_index:
-        raise ValueError("observations_dago.csv belum ada. Jalankan mode sync-observations dulu.")
+        raise ValueError("observations.csv belum ada. Jalankan mode sync-observations dulu.")
 
     if args.end_date:
         end_date = parse_iso_date(args.end_date)
@@ -1654,6 +1813,8 @@ def evaluate_historical_performance(args):
     )
     summary_payload = {
         "generated_at": now_local(args.timezone).isoformat(),
+        "location_slug": args.location_slug,
+        "location_name": args.location_name,
         "date_range": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -1704,9 +1865,8 @@ def flatten_points(results):
     for result in results:
         for jam in TARGET_TIMES:
             point = result.points.get(jam)
-            if point is None:
-                continue
-            rows.append(point)
+            if point is not None:
+                rows.append(point)
     return rows
 
 
@@ -1839,11 +1999,7 @@ def build_ensemble_rows(points):
             rh_std,
             rain_std,
         )
-        coverage_status = (
-            "cukup"
-            if len(bucket) >= MIN_SOURCE_SUCCESS_FOR_RUN
-            else "terbatas"
-        )
+        coverage_status = "cukup" if len(bucket) >= MIN_SOURCE_SUCCESS_FOR_RUN else "terbatas"
 
         rows.append(
             [
@@ -1911,7 +2067,7 @@ def save_outputs(target_date, results, args):
     canva_row = build_canva_row(ensemble_rows, target_date, args)
 
     write_csv(
-        path_output("forecast_dago.csv"),
+        path_output("forecast.csv"),
         [
             "tanggal",
             "source_id",
@@ -1930,7 +2086,7 @@ def save_outputs(target_date, results, args):
         source_rows,
     )
     write_csv(
-        path_output(f"forecast_dago_{stamp}.csv"),
+        path_output(f"forecast_{stamp}.csv"),
         [
             "tanggal",
             "source_id",
@@ -1950,7 +2106,7 @@ def save_outputs(target_date, results, args):
     )
 
     write_dict_csv(
-        path_output("source_status_dago.csv"),
+        path_output("source_status.csv"),
         [
             "tanggal",
             "source_id",
@@ -1967,7 +2123,7 @@ def save_outputs(target_date, results, args):
         status_rows,
     )
     write_dict_csv(
-        path_output(f"source_status_dago_{stamp}.csv"),
+        path_output(f"source_status_{stamp}.csv"),
         [
             "tanggal",
             "source_id",
@@ -1985,7 +2141,7 @@ def save_outputs(target_date, results, args):
     )
 
     write_csv(
-        path_output("ensemble_dago.csv"),
+        path_output("ensemble.csv"),
         [
             "jam",
             "sources_used",
@@ -2013,7 +2169,7 @@ def save_outputs(target_date, results, args):
         ensemble_rows,
     )
     write_csv(
-        path_output(f"ensemble_dago_{stamp}.csv"),
+        path_output(f"ensemble_{stamp}.csv"),
         [
             "jam",
             "sources_used",
@@ -2043,31 +2199,39 @@ def save_outputs(target_date, results, args):
 
     if bmkg_rows:
         write_csv(
-            path_output("bmkg_dago.csv"),
+            path_output("bmkg.csv"),
             ["tanggal", "jam", "suhu_C", "cuaca", "RH_%", "wind_kmh"],
             bmkg_rows,
         )
         write_csv(
-            path_output(f"bmkg_dago_{stamp}.csv"),
+            path_output(f"bmkg_{stamp}.csv"),
             ["tanggal", "jam", "suhu_C", "cuaca", "RH_%", "wind_kmh"],
             bmkg_rows,
         )
 
-    write_dict_csv(path_output("canva_dago.csv"), list(canva_row.keys()), [canva_row])
-    write_dict_csv(path_output(f"canva_dago_{stamp}.csv"), list(canva_row.keys()), [canva_row])
+    write_dict_csv(path_output("canva.csv"), list(canva_row.keys()), [canva_row])
+    write_dict_csv(path_output(f"canva_{stamp}.csv"), list(canva_row.keys()), [canva_row])
 
-    low_coverage_slots = [
-        row[0] for row in ensemble_rows if row[3] != "cukup"
-    ]
+    low_coverage_slots = [row[0] for row in ensemble_rows if row[3] != "cukup"]
     summary = {
         "generated_at": now_local(args.timezone).isoformat(),
-        "target_date": target_date.isoformat(),
+        "location_slug": args.location_slug,
         "location_name": args.location_name,
+        "bmkg_point_name": args.bmkg_point_name,
+        "area_level": args.area_level,
+        "is_proxy_bmkg": args.is_proxy_bmkg,
+        "location_note": getattr(args, "location_note", ""),
+        "adm4": args.adm4,
+        "latitude": args.latitude,
+        "longitude": args.longitude,
+        "timezone": args.timezone,
+        "target_date": target_date.isoformat(),
         "sources_total": len(results),
         "sources_success": sum(1 for item in results if item.success),
         "points_total": len(points),
         "weights_file": path_output(WEIGHTS_FILENAME),
         "health_file": path_output(HEALTH_FILENAME),
+        "output_dir": ACTIVE_OUTPUT_DIR,
         "retention_days": args.retention_days,
         "low_coverage_slots": low_coverage_slots,
         "run_status": "warning" if low_coverage_slots else "ok",
@@ -2086,19 +2250,137 @@ def seconds_until_run(run_time_text, tz_name):
     return int((next_run - now).total_seconds()), next_run
 
 
-def validate_args(args):
-    if not -90 <= args.latitude <= 90:
-        raise ValueError("latitude harus berada di antara -90 dan 90")
-    if not -180 <= args.longitude <= 180:
-        raise ValueError("longitude harus berada di antara -180 dan 180")
+def validate_common_args(args):
     if args.lookback_days <= 0:
         raise ValueError("lookback_days harus lebih besar dari 0")
     if args.retention_days <= 0:
         raise ValueError("retention_days harus lebih besar dari 0")
-    adm4_parts = args.adm4.split(".")
+    hour, minute = [int(part) for part in args.run_time.split(":")]
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("run_time harus memakai format HH:MM")
+
+
+def validate_location_config(location):
+    if not -90 <= location.latitude <= 90:
+        raise ValueError(f"latitude tidak valid untuk lokasi {location.slug}")
+    if not -180 <= location.longitude <= 180:
+        raise ValueError(f"longitude tidak valid untuk lokasi {location.slug}")
+    adm4_parts = location.adm4.split(".")
     if len(adm4_parts) != 4 or not all(part.isdigit() for part in adm4_parts):
-        raise ValueError("adm4 harus memakai format angka seperti 32.73.02.1004")
-    ZoneInfo(args.timezone)
+        raise ValueError(f"adm4 tidak valid untuk lokasi {location.slug}: {location.adm4}")
+    ZoneInfo(location.timezone)
+
+
+def clone_args_for_location(args, location):
+    data = vars(args).copy()
+    data["location_slug"] = location.slug
+    data["location_name"] = location.location_name
+    data["adm4"] = location.adm4
+    data["latitude"] = location.latitude
+    data["longitude"] = location.longitude
+    data["timezone"] = location.timezone
+    data["bmkg_point_name"] = location.bmkg_point_name
+    data["area_level"] = location.area_level
+    data["is_proxy_bmkg"] = location.is_proxy_bmkg
+    data["location_note"] = location.note
+    return argparse.Namespace(**data)
+
+
+def is_default_single_location_args(args):
+    return (
+        args.location_name == DEFAULT_LOCATION_NAME
+        and args.adm4 == DEFAULT_ADM4
+        and abs(args.latitude - DEFAULT_LATITUDE) < 1e-9
+        and abs(args.longitude - DEFAULT_LONGITUDE) < 1e-9
+        and args.timezone == DEFAULT_TIMEZONE
+    )
+
+
+def resolve_requested_locations(args):
+    if not args.locations:
+        if args.mode != "import-observations" and is_default_single_location_args(args):
+            return [LOCATION_PRESETS[slug] for slug in ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS]
+        custom_location = LocationConfig(
+            slug=sanitize_filename(args.location_name.lower()),
+            location_name=args.location_name,
+            adm4=args.adm4,
+            latitude=args.latitude,
+            longitude=args.longitude,
+            timezone=args.timezone,
+            bmkg_point_name=args.location_name,
+            area_level="custom",
+            is_proxy_bmkg=False,
+            note="Custom location from CLI arguments",
+        )
+        return [custom_location]
+
+    raw_tokens = [token.strip().lower() for token in args.locations.split(",") if token.strip()]
+    if not raw_tokens:
+        raise ValueError("--locations tidak boleh kosong")
+    if raw_tokens == ["all"]:
+        return [LOCATION_PRESETS[slug] for slug in ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS]
+
+    selected = []
+    seen = set()
+    for slug in raw_tokens:
+        if slug not in LOCATION_PRESETS:
+            raise ValueError(f"Lokasi preset tidak dikenali: {slug}")
+        if slug in seen:
+            continue
+        selected.append(LOCATION_PRESETS[slug])
+        seen.add(slug)
+    return selected
+
+
+def print_available_locations():
+    print("Lokasi preset tersedia:")
+    print("Sumber config lokasi:", ACTIVE_LOCATIONS_FILE or "(embedded defaults)")
+    for slug in ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS:
+        location = LOCATION_PRESETS[slug]
+        print(
+            f"- {location.slug}: {location.location_name} | "
+            f"adm4={location.adm4} | lat={location.latitude} | lon={location.longitude} | "
+            f"bmkg_point={location.bmkg_point_name} | proxy={location.is_proxy_bmkg}"
+        )
+        if location.note:
+            print(f"  note: {location.note}")
+    extra_slugs = [slug for slug in LOCATION_PRESETS if slug not in ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS]
+    for slug in sorted(extra_slugs):
+        location = LOCATION_PRESETS[slug]
+        print(
+            f"- {location.slug}: {location.location_name} | "
+            f"adm4={location.adm4} | lat={location.latitude} | lon={location.longitude} | "
+            f"bmkg_point={location.bmkg_point_name} | proxy={location.is_proxy_bmkg}"
+        )
+        if location.note:
+            print(f"  note: {location.note}")
+
+
+def prepare_location_context(args):
+    set_active_output_dir(args.location_slug)
+    log_path = setup_logging(args)
+    log_info("Log file:", log_path)
+    log_info("Output dir:", ACTIVE_OUTPUT_DIR)
+    log_info(
+        "Metadata lokasi:",
+        f"slug={args.location_slug}",
+        f"adm4={args.adm4}",
+        f"bmkg_point={args.bmkg_point_name}",
+        f"area_level={args.area_level}",
+        f"proxy_bmkg={args.is_proxy_bmkg}",
+    )
+    log_info(
+        "Koordinat:",
+        f"lat={args.latitude}",
+        f"lon={args.longitude}",
+        f"timezone={args.timezone}",
+    )
+    if getattr(args, "location_note", ""):
+        log_info("Catatan lokasi:", args.location_note)
+    if ACTIVE_LOCATIONS_FILE:
+        log_info("Locations file:", ACTIVE_LOCATIONS_FILE)
+    cleanup_old_outputs(args)
+    return log_path
 
 
 def run_once(args):
@@ -2149,45 +2431,6 @@ def run_once(args):
     return summary
 
 
-def loop_daily(args):
-    log_info("Mode loop harian aktif.")
-    log_info("Jadwal harian:", args.run_time)
-
-    last_run_date = None
-    if args.run_immediately_on_start:
-        try:
-            run_once(args)
-            last_run_date = now_local(args.timezone).date()
-        except Exception as exc:
-            print("ERROR run_once:", exc)
-            traceback.print_exc()
-
-    while True:
-        try:
-            seconds_left, next_run = seconds_until_run(args.run_time, args.timezone)
-            if last_run_date == next_run.date():
-                time.sleep(args.sleep_seconds)
-                continue
-
-            log_info(
-                "Menunggu run berikutnya pada",
-                next_run.strftime("%Y-%m-%d %H:%M:%S %Z"),
-                f"({seconds_left} detik lagi)",
-            )
-
-            while seconds_left > 0:
-                nap = min(args.sleep_seconds, seconds_left)
-                time.sleep(nap)
-                seconds_left -= nap
-
-            run_once(args)
-            last_run_date = next_run.date()
-        except Exception as exc:
-            print("ERROR loop_daily:", exc)
-            traceback.print_exc()
-            time.sleep(60)
-
-
 def run_self_tests(args):
     sample_point = ForecastPoint(
         source_id="BMKG",
@@ -2219,6 +2462,15 @@ def run_self_tests(args):
             }
         ]
     }
+    fake_cli = argparse.Namespace(
+        locations="all",
+        location_name=DEFAULT_LOCATION_NAME,
+        adm4=DEFAULT_ADM4,
+        latitude=DEFAULT_LATITUDE,
+        longitude=DEFAULT_LONGITUDE,
+        timezone=DEFAULT_TIMEZONE,
+    )
+
     assert bmkg_to_kategori("Hujan Ringan") == "Hujan Ringan"
     assert bmkg_rain_proxy_mm("Hujan Sedang") > 0
     assert category_from_wmo_code(0, 0, 50) == "Cerah"
@@ -2234,18 +2486,571 @@ def run_self_tests(args):
     assert label in {"Tinggi", "Sedang", "Rendah"}
     assert next(item for item in ALL_SOURCE_CONFIGS if item["source_id"] == "KMA")["models"] == "kma_seamless"
     assert next(item for item in ALL_SOURCE_CONFIGS if item["source_id"] == "UKMO")["models"] == "ukmo_seamless"
+    resolved = resolve_requested_locations(fake_cli)
+    assert [item.slug for item in resolved] == DEFAULT_MULTI_LOCATION_SLUGS
+    assert LOCATION_PRESETS["jatinangor"].adm4 == "32.11.15.2002"
+    assert LOCATION_PRESETS["arjawinangun"].adm4 == "32.09.24.2004"
+    temp_locations_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            suffix=".json",
+            delete=False,
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "default_multi_locations": ["customtown"],
+                    "locations": {
+                        "customtown": {
+                            "location_name": "Custom Town",
+                            "adm4": "32.73.02.1004",
+                            "latitude": -6.9,
+                            "longitude": 107.6,
+                            "bmkg_point_name": "Custom BMKG",
+                            "area_level": "test",
+                            "is_proxy_bmkg": True,
+                            "note": "custom config test",
+                        }
+                    },
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+            temp_locations_path = f.name
+
+        custom_presets, custom_defaults, custom_file = load_location_presets(temp_locations_path)
+        assert custom_defaults == ["customtown"]
+        assert custom_presets["customtown"].bmkg_point_name == "Custom BMKG"
+        assert custom_presets["customtown"].is_proxy_bmkg is True
+        assert custom_file == temp_locations_path
+    finally:
+        if temp_locations_path and os.path.exists(temp_locations_path):
+            os.remove(temp_locations_path)
     log_info("Self-test selesai. Semua assertion lulus.")
+
+
+def execute_mode_for_location(base_args, location, runner):
+    location_args = clone_args_for_location(base_args, location)
+    validate_location_config(location)
+    log_path = prepare_location_context(location_args)
+    result = runner(location_args)
+    return location_args, result, log_path
+
+
+def write_batch_summary(mode, rows, extra_payload=None):
+    payload = {
+        "generated_at": now_local(DEFAULT_TIMEZONE).isoformat(),
+        "mode": mode,
+        "locations_file": ACTIVE_LOCATIONS_FILE or "",
+        "default_multi_locations": list(ACTIVE_DEFAULT_MULTI_LOCATION_SLUGS),
+        "locations_total": len(rows),
+        "locations": rows,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    write_json(root_output_path(f"{mode}_batch_summary.json"), payload)
+
+
+def combined_location_fieldnames():
+    return [
+        "location_slug",
+        "location_name",
+        "target_date",
+        "adm4",
+        "bmkg_point_name",
+        "area_level",
+        "is_proxy_bmkg",
+        "latitude",
+        "longitude",
+        "timezone",
+        "location_note",
+    ]
+
+
+def combined_location_metadata(location_args, target_date):
+    return {
+        "location_slug": location_args.location_slug,
+        "location_name": location_args.location_name,
+        "target_date": target_date,
+        "adm4": location_args.adm4,
+        "bmkg_point_name": location_args.bmkg_point_name,
+        "area_level": location_args.area_level,
+        "is_proxy_bmkg": "yes" if location_args.is_proxy_bmkg else "no",
+        "latitude": location_args.latitude,
+        "longitude": location_args.longitude,
+        "timezone": location_args.timezone,
+        "location_note": getattr(location_args, "location_note", ""),
+    }
+
+
+def combined_ensemble_fieldnames():
+    return combined_location_fieldnames() + [
+        "jam",
+        "sources_used",
+        "weight_total",
+        "coverage_status",
+        "source_list",
+        "dominant_category",
+        "confidence_score",
+        "confidence_label",
+        "temp_mean",
+        "temp_error",
+        "rh_mean",
+        "rh_error",
+        "rain_mean",
+        "rain_error",
+        "heat_index_mean",
+        "heat_index_error",
+        "%cerah",
+        "%cerah_berawan",
+        "%berawan",
+        "%hujan_ringan",
+        "%hujan_sedang",
+        "%hujan_lebat",
+    ]
+
+
+def combined_forecast_fieldnames():
+    return combined_location_fieldnames() + [
+        "tanggal",
+        "source_id",
+        "provider",
+        "target_jam",
+        "source_datetime",
+        "suhu_C",
+        "RH_%",
+        "rain_mm",
+        "wind_kmh",
+        "gap_minutes",
+        "point_weight",
+        "kategori",
+        "raw_condition",
+    ]
+
+
+def combined_source_status_fieldnames():
+    return combined_location_fieldnames() + [
+        "tanggal",
+        "source_id",
+        "provider",
+        "success",
+        "base_weight",
+        "health_factor",
+        "effective_base_weight",
+        "points_collected",
+        "target_points",
+        "payload_saved_path",
+        "error",
+    ]
+
+
+def collect_combined_ensemble_rows(location_args, target_date, output_dir):
+    ensemble_path = os.path.join(output_dir, "ensemble.csv")
+    rows = []
+    metadata = combined_location_metadata(location_args, target_date)
+    for row in read_dict_csv(ensemble_path):
+        rows.append(
+            {
+                **metadata,
+                "jam": row.get("jam") or "",
+                "sources_used": row.get("sources_used") or "",
+                "weight_total": row.get("weight_total") or "",
+                "coverage_status": row.get("coverage_status") or "",
+                "source_list": row.get("source_list") or "",
+                "dominant_category": row.get("dominant_category") or "",
+                "confidence_score": row.get("confidence_score") or "",
+                "confidence_label": row.get("confidence_label") or "",
+                "temp_mean": row.get("temp_mean") or "",
+                "temp_error": row.get("temp_error") or "",
+                "rh_mean": row.get("rh_mean") or "",
+                "rh_error": row.get("rh_error") or "",
+                "rain_mean": row.get("rain_mean") or "",
+                "rain_error": row.get("rain_error") or "",
+                "heat_index_mean": row.get("heat_index_mean") or "",
+                "heat_index_error": row.get("heat_index_error") or "",
+                "%cerah": row.get("%cerah") or "",
+                "%cerah_berawan": row.get("%cerah_berawan") or "",
+                "%berawan": row.get("%berawan") or "",
+                "%hujan_ringan": row.get("%hujan_ringan") or "",
+                "%hujan_sedang": row.get("%hujan_sedang") or "",
+                "%hujan_lebat": row.get("%hujan_lebat") or "",
+            }
+        )
+    return rows
+
+
+def collect_combined_forecast_rows(location_args, target_date, output_dir):
+    forecast_path = os.path.join(output_dir, "forecast.csv")
+    rows = []
+    metadata = combined_location_metadata(location_args, target_date)
+    for row in read_dict_csv(forecast_path):
+        rows.append(
+            {
+                **metadata,
+                "tanggal": row.get("tanggal") or "",
+                "source_id": row.get("source_id") or "",
+                "provider": row.get("provider") or "",
+                "target_jam": row.get("target_jam") or "",
+                "source_datetime": row.get("source_datetime") or "",
+                "suhu_C": row.get("suhu_C") or "",
+                "RH_%": row.get("RH_%") or "",
+                "rain_mm": row.get("rain_mm") or "",
+                "wind_kmh": row.get("wind_kmh") or "",
+                "gap_minutes": row.get("gap_minutes") or "",
+                "point_weight": row.get("point_weight") or "",
+                "kategori": row.get("kategori") or "",
+                "raw_condition": row.get("raw_condition") or "",
+            }
+        )
+    return rows
+
+
+def collect_combined_source_status_rows(location_args, target_date, output_dir):
+    status_path = os.path.join(output_dir, "source_status.csv")
+    rows = []
+    metadata = combined_location_metadata(location_args, target_date)
+    for row in read_dict_csv(status_path):
+        rows.append(
+            {
+                **metadata,
+                "tanggal": row.get("tanggal") or "",
+                "source_id": row.get("source_id") or "",
+                "provider": row.get("provider") or "",
+                "success": row.get("success") or "",
+                "base_weight": row.get("base_weight") or "",
+                "health_factor": row.get("health_factor") or "",
+                "effective_base_weight": row.get("effective_base_weight") or "",
+                "points_collected": row.get("points_collected") or "",
+                "target_points": row.get("target_points") or "",
+                "payload_saved_path": row.get("payload_saved_path") or "",
+                "error": row.get("error") or "",
+            }
+        )
+    return rows
+
+
+def write_combined_csv(base_filename, fieldnames, rows):
+    if not rows:
+        return None, None
+
+    unique_dates = sorted({row["target_date"] for row in rows if row.get("target_date")})
+    run_stamp = now_local(DEFAULT_TIMEZONE).strftime("%Y%m%d_%H%M%S")
+    if len(unique_dates) == 1:
+        stamp = f"{unique_dates[0].replace('-', '')}_{run_stamp}"
+    else:
+        stamp = run_stamp
+
+    latest_path = root_output_path(f"{base_filename}.csv")
+    versioned_path = root_output_path(f"{base_filename}_{stamp}.csv")
+    write_dict_csv(versioned_path, fieldnames, rows)
+    try:
+        write_dict_csv(latest_path, fieldnames, rows)
+    except PermissionError as exc:
+        batch_warning(
+            f"File {os.path.basename(latest_path)} sedang dipakai atau terkunci,",
+            "jadi hanya file versi waktu yang ditulis:",
+            exc,
+        )
+        latest_path = None
+    return latest_path, versioned_path
+
+
+def run_forecast_for_locations(base_args, locations):
+    rows = []
+    combined_ensemble_rows = []
+    combined_forecast_rows = []
+    combined_status_rows = []
+    for location in locations:
+        try:
+            location_args, summary, log_path = execute_mode_for_location(
+                base_args, location, run_once
+            )
+            output_dir = summary.get("output_dir") or ACTIVE_OUTPUT_DIR
+            combined_ensemble_rows.extend(
+                collect_combined_ensemble_rows(
+                    location_args,
+                    summary["target_date"],
+                    output_dir,
+                )
+            )
+            combined_forecast_rows.extend(
+                collect_combined_forecast_rows(
+                    location_args,
+                    summary["target_date"],
+                    output_dir,
+                )
+            )
+            combined_status_rows.extend(
+                collect_combined_source_status_rows(
+                    location_args,
+                    summary["target_date"],
+                    output_dir,
+                )
+            )
+            rows.append(
+                {
+                    "location_slug": location_args.location_slug,
+                    "location_name": location_args.location_name,
+                    "bmkg_point_name": location_args.bmkg_point_name,
+                    "area_level": location_args.area_level,
+                    "is_proxy_bmkg": location_args.is_proxy_bmkg,
+                    "target_date": summary["target_date"],
+                    "run_status": summary["run_status"],
+                    "sources_success": summary["sources_success"],
+                    "sources_total": summary["sources_total"],
+                    "low_coverage_slots": summary["low_coverage_slots"],
+                    "output_dir": output_dir,
+                    "log_file": log_path,
+                }
+            )
+        except Exception as exc:
+            batch_warning(f"{location.location_name} gagal total:", exc)
+            traceback.print_exc()
+            rows.append(
+                {
+                    "location_slug": location.slug,
+                    "location_name": location.location_name,
+                    "bmkg_point_name": location.bmkg_point_name,
+                    "area_level": location.area_level,
+                    "is_proxy_bmkg": location.is_proxy_bmkg,
+                    "run_status": "error",
+                    "error": str(exc),
+                }
+            )
+    combined_outputs = {}
+    for base_filename, label, fieldnames, payload_rows in (
+        (
+            "ensemble_all_locations",
+            "Ensemble",
+            combined_ensemble_fieldnames(),
+            combined_ensemble_rows,
+        ),
+        (
+            "forecast_all_locations",
+            "Forecast raw",
+            combined_forecast_fieldnames(),
+            combined_forecast_rows,
+        ),
+        (
+            "source_status_all_locations",
+            "Source status",
+            combined_source_status_fieldnames(),
+            combined_status_rows,
+        ),
+    ):
+        latest_path, versioned_path = write_combined_csv(
+            base_filename,
+            fieldnames,
+            payload_rows,
+        )
+        combined_outputs[base_filename] = {
+            "latest_path": latest_path or "",
+            "versioned_path": versioned_path or "",
+            "rows": len(payload_rows),
+        }
+        if latest_path:
+            batch_info(f"{label} gabungan:", latest_path)
+        if versioned_path:
+            batch_info(f"{label} gabungan versi waktu:", versioned_path)
+    write_batch_summary(
+        "forecast",
+        rows,
+        {
+            "locations_ok": sum(1 for row in rows if row.get("run_status") != "error"),
+            "combined_outputs": combined_outputs,
+        },
+    )
+    return rows
+
+
+def sync_observations_for_locations(base_args, locations):
+    rows = []
+    for location in locations:
+        try:
+            location_args, summary_rows, log_path = execute_mode_for_location(
+                base_args, location, sync_observations
+            )
+            rows.append(
+                {
+                    "location_slug": location_args.location_slug,
+                    "location_name": location_args.location_name,
+                    "bmkg_point_name": location_args.bmkg_point_name,
+                    "area_level": location_args.area_level,
+                    "is_proxy_bmkg": location_args.is_proxy_bmkg,
+                    "days_processed": len(summary_rows),
+                    "output_dir": ACTIVE_OUTPUT_DIR,
+                    "log_file": log_path,
+                }
+            )
+        except Exception as exc:
+            batch_warning(f"Sync observasi gagal untuk {location.location_name}:", exc)
+            traceback.print_exc()
+            rows.append(
+                {
+                    "location_slug": location.slug,
+                    "location_name": location.location_name,
+                    "bmkg_point_name": location.bmkg_point_name,
+                    "area_level": location.area_level,
+                    "is_proxy_bmkg": location.is_proxy_bmkg,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
+    write_batch_summary("sync-observations", rows)
+    return rows
+
+
+def evaluate_for_locations(base_args, locations):
+    rows = []
+    for location in locations:
+        try:
+            location_args, result, log_path = execute_mode_for_location(
+                base_args, location, evaluate_historical_performance
+            )
+            rows.append(
+                {
+                    "location_slug": location_args.location_slug,
+                    "location_name": location_args.location_name,
+                    "bmkg_point_name": location_args.bmkg_point_name,
+                    "area_level": location_args.area_level,
+                    "is_proxy_bmkg": location_args.is_proxy_bmkg,
+                    "evaluated_sources": len(result["source_score_rows"]),
+                    "evaluated_rows": len(result["detail_rows"]),
+                    "weights_file": result["weights_path"],
+                    "output_dir": ACTIVE_OUTPUT_DIR,
+                    "log_file": log_path,
+                }
+            )
+        except Exception as exc:
+            batch_warning(f"Evaluasi gagal untuk {location.location_name}:", exc)
+            traceback.print_exc()
+            rows.append(
+                {
+                    "location_slug": location.slug,
+                    "location_name": location.location_name,
+                    "bmkg_point_name": location.bmkg_point_name,
+                    "area_level": location.area_level,
+                    "is_proxy_bmkg": location.is_proxy_bmkg,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
+    write_batch_summary("evaluate", rows)
+    return rows
+
+
+def self_test_for_locations(base_args, locations):
+    rows = []
+    for location in locations:
+        try:
+            location_args, _, log_path = execute_mode_for_location(
+                base_args, location, run_self_tests
+            )
+            rows.append(
+                {
+                    "location_slug": location_args.location_slug,
+                    "location_name": location_args.location_name,
+                    "bmkg_point_name": location_args.bmkg_point_name,
+                    "area_level": location_args.area_level,
+                    "is_proxy_bmkg": location_args.is_proxy_bmkg,
+                    "status": "ok",
+                    "output_dir": ACTIVE_OUTPUT_DIR,
+                    "log_file": log_path,
+                }
+            )
+        except Exception as exc:
+            batch_warning(f"Self-test gagal untuk {location.location_name}:", exc)
+            traceback.print_exc()
+            rows.append(
+                {
+                    "location_slug": location.slug,
+                    "location_name": location.location_name,
+                    "bmkg_point_name": location.bmkg_point_name,
+                    "area_level": location.area_level,
+                    "is_proxy_bmkg": location.is_proxy_bmkg,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
+    write_batch_summary("self-test", rows)
+    return rows
+
+
+def import_observations_for_location(base_args, location):
+    location_args, imported_rows, log_path = execute_mode_for_location(
+        base_args, location, import_external_observations
+    )
+    rows = [
+        {
+            "location_slug": location_args.location_slug,
+            "location_name": location_args.location_name,
+            "bmkg_point_name": location_args.bmkg_point_name,
+            "area_level": location_args.area_level,
+            "is_proxy_bmkg": location_args.is_proxy_bmkg,
+            "rows_imported": len(imported_rows),
+            "output_dir": ACTIVE_OUTPUT_DIR,
+            "log_file": log_path,
+        }
+    ]
+    write_batch_summary("import-observations", rows)
+    return rows
+
+
+def loop_daily(base_args, locations):
+    scheduler_tz = locations[0].timezone if locations else base_args.timezone
+    batch_info("Mode loop harian aktif.")
+    batch_info("Jadwal harian:", base_args.run_time)
+    batch_info("Lokasi aktif:", ", ".join(location.location_name for location in locations))
+
+    if base_args.run_immediately_on_start:
+        batch_info("Menjalankan forecast segera saat start.")
+        run_forecast_for_locations(base_args, locations)
+
+    while True:
+        try:
+            seconds_left, next_run = seconds_until_run(base_args.run_time, scheduler_tz)
+            batch_info(
+                "Menunggu run berikutnya pada",
+                next_run.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                f"({seconds_left} detik lagi)",
+            )
+
+            while seconds_left > 0:
+                nap = min(base_args.sleep_seconds, seconds_left)
+                time.sleep(nap)
+                seconds_left -= nap
+
+            run_forecast_for_locations(base_args, locations)
+        except Exception as exc:
+            batch_warning("ERROR loop_daily:", exc)
+            traceback.print_exc()
+            time.sleep(60)
 
 
 def build_arg_parser():
     parser = argparse.ArgumentParser(
-        description="Single-file multi-source weather ensemble collector for Dago."
+        description="Multi-location multi-source weather ensemble collector."
     )
     parser.add_argument(
         "--mode",
         choices=["forecast", "sync-observations", "evaluate", "import-observations", "self-test"],
         default="forecast",
         help="forecast = ambil prakiraan baru, sync-observations = sinkron data observasi historis, evaluate = hitung performa dan bobot sumber, import-observations = impor CSV observasi eksternal, self-test = assertion internal script",
+    )
+    parser.add_argument(
+        "--locations",
+        help="Preset lokasi, pisahkan dengan koma. Contoh: dago,jatinangor,arjawinangun atau all. Jika kosong, default-nya menjalankan semua preset, kecuali Anda memberi argumen lokasi manual atau memakai mode import-observations.",
+    )
+    parser.add_argument(
+        "--list-locations",
+        action="store_true",
+        help="Tampilkan daftar preset lokasi lalu keluar.",
+    )
+    parser.add_argument(
+        "--locations-file",
+        help="Path file JSON preset lokasi. Jika kosong, script akan mencoba locations.json di folder script.",
     )
     parser.add_argument("--location-name", default=DEFAULT_LOCATION_NAME)
     parser.add_argument("--adm4", default=DEFAULT_ADM4)
@@ -2287,33 +3092,35 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
     DEBUG = args.debug
-    validate_args(args)
-    log_path = setup_logging(args)
-    log_info("Log file:", log_path)
-    cleanup_old_outputs(args)
+    refresh_location_presets(args.locations_file)
+
+    if args.list_locations:
+        print_available_locations()
+        return
+
+    validate_common_args(args)
+    locations = resolve_requested_locations(args)
+    for location in locations:
+        validate_location_config(location)
 
     if args.mode == "forecast":
         if args.run_daily:
-            loop_daily(args)
+            loop_daily(args, locations)
         else:
-            run_once(args)
+            run_forecast_for_locations(args, locations)
     elif args.mode == "sync-observations":
-        summary_rows = sync_observations(args)
-        log_info("Sinkron observasi selesai. Hari diproses:", len(summary_rows))
+        sync_observations_for_locations(args, locations)
     elif args.mode == "evaluate":
-        result = evaluate_historical_performance(args)
-        log_info("Evaluasi selesai. File bobot:", result["weights_path"])
-        log_info("Sumber dievaluasi:", len(result["source_score_rows"]))
+        evaluate_for_locations(args, locations)
     elif args.mode == "import-observations":
-        imported_rows = import_external_observations(args)
-        log_info("Import observasi selesai. Row valid:", len(imported_rows))
+        if len(locations) != 1:
+            raise ValueError("Mode import-observations hanya mendukung satu lokasi per run.")
+        import_observations_for_location(args, locations[0])
     elif args.mode == "self-test":
-        run_self_tests(args)
+        self_test_for_locations(args, locations)
     else:
         raise ValueError(f"Mode tidak dikenali: {args.mode}")
 
 
-if __name__ == "__main__":
-    main()
 if __name__ == "__main__":
     main()
