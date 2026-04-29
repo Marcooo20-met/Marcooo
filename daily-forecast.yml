@@ -3,10 +3,10 @@ name: Daily Forecast
 on:
   workflow_dispatch:
   schedule:
-    - cron: " 00 12 * * *"
+    - cron: "0 12 * * *"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   forecast:
@@ -35,35 +35,17 @@ jobs:
         run: |
           python weather_ensemble_dago.py --mode forecast --timezone Asia/Jakarta --no-debug
 
-      - name: Build workflow summary
-        shell: bash
-        run: |
-          {
-            echo "## Daily Forecast"
-            echo ""
-            if [ -f run_summary.json ]; then
-              echo '```json'
-              cat run_summary.json
-              echo '```'
-            else
-              echo "run_summary.json not found"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload forecast artifacts
         uses: actions/upload-artifact@v4
         with:
           name: daily-forecast-output
-          path: |
-            bmkg_dago*.csv
-            canva_dago*.csv
-            ensemble_dago*.csv
-            forecast_dago*.csv
-            run_summary*.json
-            source_status_dago*.csv
-            source_health.json
-            source_weights.json
-            logs/
-            raw_payloads/
+          path: outputs/
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: outputs
+          publish_branch: gh-pages
