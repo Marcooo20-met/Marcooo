@@ -1,0 +1,73 @@
+{
+  "generated_at": "2026-04-29T12:33:02.191638+07:00",
+  "mode": "forecast",
+  "locations_file": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\locations.json",
+  "default_multi_locations": [
+    "dago",
+    "jatinangor",
+    "arjawinangun"
+  ],
+  "locations_total": 3,
+  "locations": [
+    {
+      "location_slug": "dago",
+      "location_name": "Dago, Bandung",
+      "bmkg_point_name": "Dago",
+      "area_level": "kelurahan",
+      "is_proxy_bmkg": false,
+      "target_date": "2026-04-30",
+      "run_status": "ok",
+      "sources_success": 9,
+      "sources_total": 9,
+      "low_coverage_slots": [],
+      "output_dir": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\dago",
+      "log_file": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\dago\\logs\\forecast_20260429_123251.log"
+    },
+    {
+      "location_slug": "jatinangor",
+      "location_name": "Jatinangor, Sumedang",
+      "bmkg_point_name": "Hegarmanah",
+      "area_level": "kecamatan",
+      "is_proxy_bmkg": true,
+      "target_date": "2026-04-30",
+      "run_status": "ok",
+      "sources_success": 9,
+      "sources_total": 9,
+      "low_coverage_slots": [],
+      "output_dir": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\jatinangor",
+      "log_file": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\jatinangor\\logs\\forecast_20260429_123255.log"
+    },
+    {
+      "location_slug": "arjawinangun",
+      "location_name": "Arjawinangun, Cirebon",
+      "bmkg_point_name": "Arjawinangun",
+      "area_level": "kecamatan",
+      "is_proxy_bmkg": false,
+      "target_date": "2026-04-30",
+      "run_status": "ok",
+      "sources_success": 9,
+      "sources_total": 9,
+      "low_coverage_slots": [],
+      "output_dir": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\arjawinangun",
+      "log_file": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\arjawinangun\\logs\\forecast_20260429_123258.log"
+    }
+  ],
+  "locations_ok": 3,
+  "combined_outputs": {
+    "ensemble_all_locations": {
+      "latest_path": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\ensemble_all_locations.csv",
+      "versioned_path": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\ensemble_all_locations_20260430_20260429_123302.csv",
+      "rows": 15
+    },
+    "forecast_all_locations": {
+      "latest_path": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\forecast_all_locations.csv",
+      "versioned_path": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\forecast_all_locations_20260430_20260429_123302.csv",
+      "rows": 135
+    },
+    "source_status_all_locations": {
+      "latest_path": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\source_status_all_locations.csv",
+      "versioned_path": "c:\\Users\\itsme\\Documents\\Codex\\2026-04-26\\import-argparse-import-csv-import-json\\outputs\\source_status_all_locations_20260430_20260429_123302.csv",
+      "rows": 27
+    }
+  }
+}
